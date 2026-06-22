@@ -1,10 +1,11 @@
-const sqlite3 = require('sqlite3').verbose();
+const createDatabase = require('@databases/sqlite');
+const { sql } = require('@databases/sqlite');
 const path = require('path');
 
-const db = new sqlite3.Database(path.join(__dirname, 'estoque.db'));
+async function initDb() {
+  const db = await createDatabase(path.join(__dirname, 'estoque.db'));
 
-db.serialize(() => {
-  db.run(`
+  await db.query(sql`
     CREATE TABLE IF NOT EXISTS produtos (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       nome TEXT NOT NULL,
@@ -19,7 +20,7 @@ db.serialize(() => {
     )
   `);
 
-  db.run(`
+  await db.query(sql`
     CREATE TABLE IF NOT EXISTS movimentacoes (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       produto_id INTEGER NOT NULL,
@@ -31,6 +32,8 @@ db.serialize(() => {
       FOREIGN KEY (produto_id) REFERENCES produtos(id)
     )
   `);
-});
 
-module.exports = db;
+  return db;
+}
+
+module.exports = { initDb, sql };
