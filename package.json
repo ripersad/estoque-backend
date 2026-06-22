@@ -8,7 +8,6 @@
     "dev": "nodemon server.js"
   },
   "dependencies": {
-    "@databases/sqlite": "^4.0.2",
     "cors": "^2.8.5",
     "express": "^4.18.2"
   },
