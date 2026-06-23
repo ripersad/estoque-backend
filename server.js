@@ -11,15 +11,12 @@ app.use(express.json());
 // ── Produtos ──────────────────────────────────────────────
 app.get('/api/produtos', async (req, res) => {
   try {
-    const { busca, categoria } = req.query;
+    const { busca } = req.query;
     const filtros = [sql`1=1`];
 
     if (busca) {
       const like = `%${busca}%`;
       filtros.push(sql`(nome LIKE ${like} OR descricao LIKE ${like})`);
-    }
-    if (categoria) {
-      filtros.push(sql`categoria = ${categoria}`);
     }
 
     const rows = await db.query(sql`
@@ -43,12 +40,12 @@ app.get('/api/produtos/:id', async (req, res) => {
 
 app.post('/api/produtos', async (req, res) => {
   try {
-    const { nome, descricao, categoria, preco_custo, preco_venda, quantidade, quantidade_minima, unidade } = req.body;
+    const { nome, descricao, modelo, preco_custo, preco_venda, quantidade, quantidade_minima, unidade } = req.body;
     if (!nome) return res.status(400).json({ erro: 'Nome é obrigatório' });
 
     const [{ id }] = await db.query(sql`
-      INSERT INTO produtos (nome, descricao, categoria, preco_custo, preco_venda, quantidade, quantidade_minima, unidade)
-      VALUES (${nome}, ${descricao}, ${categoria}, ${preco_custo || 0}, ${preco_venda || 0}, ${quantidade || 0}, ${quantidade_minima || 5}, ${unidade || 'un'})
+      INSERT INTO produtos (nome, descricao, modelo, preco_custo, preco_venda, quantidade, quantidade_minima, unidade)
+      VALUES (${nome}, ${descricao}, ${modelo}, ${preco_custo || 0}, ${preco_venda || 0}, ${quantidade || 0}, ${quantidade_minima || 5}, ${unidade || 'un'})
       RETURNING id
     `);
 
@@ -61,17 +58,13 @@ app.post('/api/produtos', async (req, res) => {
 
 app.put('/api/produtos/:id', async (req, res) => {
   try {
-    const { nome, descricao, categoria, preco_custo, preco_venda, quantidade_minima, unidade } = req.body;
-    const [existente] = await db.query(sql`SELECT id FROM produtos WHERE id = ${req.params.id}`);
+    const [existente] = await db.query(sql`SELECT * FROM produtos WHERE id = ${req.params.id}`);
     if (!existente) return res.status(404).json({ erro: 'Produto não encontrado' });
 
-    await db.query(sql`
-      UPDATE produtos
-      SET nome=${nome}, descricao=${descricao}, categoria=${categoria},
-          preco_custo=${preco_custo}, preco_venda=${preco_venda},
-          quantidade_minima=${quantidade_minima}, unidade=${unidade}
-      WHERE id=${req.params.id}
-    `);
+    const nome = req.body.nome ?? existente.nome;
+    const modelo = req.body.modelo ?? existente.modelo;
+
+    await db.query(sql`UPDATE produtos SET nome=${nome}, modelo=${modelo} WHERE id=${req.params.id}`);
 
     const [produto] = await db.query(sql`SELECT * FROM produtos WHERE id = ${req.params.id}`);
     res.json(produto);
@@ -119,16 +112,26 @@ app.get('/api/movimentacoes', async (req, res) => {
 
 app.post('/api/movimentacoes/entrada', async (req, res) => {
   try {
-    const { produto_id, quantidade, preco_unitario, observacao } = req.body;
+    const { produto_id, quantidade, preco_unitario, cor, modelo, capacidade, fornecedor, nota_fiscal, preco_sugerido_venda, percentual_lucro } = req.body;
     if (!produto_id || !quantidade) return res.status(400).json({ erro: 'produto_id e quantidade são obrigatórios' });
 
     const [produto] = await db.query(sql`SELECT * FROM produtos WHERE id = ${produto_id}`);
     if (!produto) return res.status(404).json({ erro: 'Produto não encontrado' });
 
+    const pctLucro = preco_sugerido_venda && preco_unitario
+      ? ((preco_sugerido_venda - preco_unitario) / preco_unitario * 100)
+      : (percentual_lucro ?? null);
+    const valLucro = preco_sugerido_venda && preco_unitario
+      ? ((preco_sugerido_venda - preco_unitario) * quantidade)
+      : null;
+
     await db.query(sql`UPDATE produtos SET quantidade = quantidade + ${quantidade} WHERE id = ${produto_id}`);
+    if (preco_unitario) await db.query(sql`UPDATE produtos SET preco_custo = ${preco_unitario} WHERE id = ${produto_id}`);
+    if (preco_sugerido_venda) await db.query(sql`UPDATE produtos SET preco_venda = ${preco_sugerido_venda} WHERE id = ${produto_id}`);
+
     const [{ id }] = await db.query(sql`
-      INSERT INTO movimentacoes (produto_id, tipo, quantidade, preco_unitario, observacao)
-      VALUES (${produto_id}, 'entrada', ${quantidade}, ${preco_unitario}, ${observacao})
+      INSERT INTO movimentacoes (produto_id, tipo, quantidade, preco_unitario, cor, modelo, capacidade, fornecedor, nota_fiscal, preco_sugerido_venda, percentual_lucro, valor_lucro)
+      VALUES (${produto_id}, 'entrada', ${quantidade}, ${preco_unitario}, ${cor}, ${modelo}, ${capacidade}, ${fornecedor}, ${nota_fiscal}, ${preco_sugerido_venda}, ${pctLucro}, ${valLucro})
       RETURNING id
     `);
 
@@ -140,17 +143,24 @@ app.post('/api/movimentacoes/entrada', async (req, res) => {
 
 app.post('/api/movimentacoes/saida', async (req, res) => {
   try {
-    const { produto_id, quantidade, preco_unitario, observacao } = req.body;
+    const { produto_id, quantidade, preco_unitario, cor, modelo, capacidade, cliente } = req.body;
     if (!produto_id || !quantidade) return res.status(400).json({ erro: 'produto_id e quantidade são obrigatórios' });
 
     const [produto] = await db.query(sql`SELECT * FROM produtos WHERE id = ${produto_id}`);
     if (!produto) return res.status(404).json({ erro: 'Produto não encontrado' });
     if (produto.quantidade < quantidade) return res.status(400).json({ erro: 'Estoque insuficiente' });
 
+    const pctLucro = preco_unitario && produto.preco_custo
+      ? ((preco_unitario - produto.preco_custo) / produto.preco_custo * 100)
+      : null;
+    const valLucro = preco_unitario && produto.preco_custo
+      ? ((preco_unitario - produto.preco_custo) * quantidade)
+      : null;
+
     await db.query(sql`UPDATE produtos SET quantidade = quantidade - ${quantidade} WHERE id = ${produto_id}`);
     const [{ id }] = await db.query(sql`
-      INSERT INTO movimentacoes (produto_id, tipo, quantidade, preco_unitario, observacao)
-      VALUES (${produto_id}, 'saida', ${quantidade}, ${preco_unitario}, ${observacao})
+      INSERT INTO movimentacoes (produto_id, tipo, quantidade, preco_unitario, cor, modelo, capacidade, cliente, percentual_lucro, valor_lucro)
+      VALUES (${produto_id}, 'saida', ${quantidade}, ${preco_unitario}, ${cor}, ${modelo}, ${capacidade}, ${cliente}, ${pctLucro}, ${valLucro})
       RETURNING id
     `);
 
@@ -184,15 +194,6 @@ app.get('/api/dashboard', async (req, res) => {
     ]);
 
     res.json({ totalProdutos, totalItens, valorEstoque, estoqueBaixo, entradasHoje, saidasHoje, produtosBaixos, ultimasMovimentacoes });
-  } catch (err) {
-    res.status(500).json({ erro: err.message });
-  }
-});
-
-app.get('/api/categorias', async (req, res) => {
-  try {
-    const rows = await db.query(sql`SELECT DISTINCT categoria FROM produtos WHERE categoria IS NOT NULL ORDER BY categoria`);
-    res.json(rows.map(c => c.categoria));
   } catch (err) {
     res.status(500).json({ erro: err.message });
   }
