@@ -146,24 +146,68 @@ function initDb() {
       saveFile(CLIENTES_FILE, cliData);
     },
 
+    // ── Estoque (agrupado por variação) ───────────────────────
+    getEstoqueInterno() {
+      const groups = {};
+      for (const m of movData.items) {
+        const produto = prodData.items.find(p => p.id === m.produto_id);
+        if (!produto) continue;
+        const key = `${m.produto_id}|${m.modelo || ''}|${m.cor || ''}|${m.capacidade || ''}`;
+        if (!groups[key]) {
+          groups[key] = {
+            produto_id: m.produto_id,
+            produto_nome: produto.nome,
+            modelo: m.modelo || '',
+            cor: m.cor || '',
+            capacidade: m.capacidade || '',
+            quantidade: 0,
+            preco_custo: produto.preco_custo || null,
+            preco_venda: produto.preco_venda || null,
+            quantidade_minima: produto.quantidade_minima ?? 5,
+            ultima_entrada: null,
+          };
+        }
+        if (m.tipo === 'entrada') {
+          groups[key].quantidade += m.quantidade;
+          if (!groups[key].ultima_entrada || m.criado_em > groups[key].ultima_entrada) {
+            groups[key].ultima_entrada = m.criado_em;
+            if (m.preco_unitario) groups[key].preco_custo = m.preco_unitario;
+            if (m.preco_sugerido_venda) groups[key].preco_venda = m.preco_sugerido_venda;
+          }
+        } else {
+          groups[key].quantidade -= m.quantidade;
+        }
+      }
+      return Object.values(groups).map(g => {
+        const status = g.quantidade === 0 ? 'Zerado' : g.quantidade <= g.quantidade_minima ? 'Baixo' : 'OK';
+        const { ultima_entrada, ...rest } = g;
+        return { ...rest, status };
+      });
+    },
+
+    getEstoque() {
+      return db.getEstoqueInterno().sort((a, b) => a.produto_nome.localeCompare(b.produto_nome));
+    },
+
     // ── Dashboard ─────────────────────────────────────────────
     getDashboard() {
       const today = new Date().toISOString().slice(0, 10);
-      const totalProdutos = prodData.items.length;
       const totalItens = prodData.items.reduce((s, p) => s + p.quantidade, 0);
       const valorEstoque = prodData.items.reduce((s, p) => s + p.quantidade * p.preco_custo, 0);
-      const estoqueBaixo = prodData.items.filter(p => p.quantidade <= p.quantidade_minima).length;
+      const variacoes = db.getEstoqueInterno();
+      const estoqueBaixo = variacoes.filter(v => v.status === 'Baixo' || v.status === 'Zerado').length;
       const entradasHoje = movData.items
         .filter(m => m.tipo === 'entrada' && m.criado_em.slice(0, 10) === today)
         .reduce((s, m) => s + m.quantidade, 0);
       const saidasHoje = movData.items
         .filter(m => m.tipo === 'saida' && m.criado_em.slice(0, 10) === today)
         .reduce((s, m) => s + m.quantidade, 0);
-      const produtosBaixos = prodData.items
-        .filter(p => p.quantidade <= p.quantidade_minima)
+      const produtosBaixos = variacoes
+        .filter(v => v.status === 'Baixo' || v.status === 'Zerado')
         .sort((a, b) => a.quantidade - b.quantidade)
         .slice(0, 5)
-        .map(({ id, nome, quantidade, quantidade_minima }) => ({ id, nome, quantidade, quantidade_minima }));
+        .map(({ produto_nome, modelo, cor, capacidade, quantidade, quantidade_minima }) =>
+          ({ produto_nome, modelo, cor, capacidade, quantidade, quantidade_minima }));
       const ultimasMovimentacoes = movData.items
         .sort((a, b) => b.criado_em.localeCompare(a.criado_em))
         .slice(0, 10)
@@ -171,7 +215,7 @@ function initDb() {
           const p = prodData.items.find(p => p.id === m.produto_id);
           return { ...m, produto_nome: p ? p.nome : '' };
         });
-      return { totalProdutos, totalItens, valorEstoque, estoqueBaixo, entradasHoje, saidasHoje, produtosBaixos, ultimasMovimentacoes };
+      return { totalItens, valorEstoque, estoqueBaixo, entradasHoje, saidasHoje, produtosBaixos, ultimasMovimentacoes };
     },
   };
 

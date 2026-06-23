@@ -71,9 +71,17 @@ app.get('/api/movimentacoes', (req, res) => {
   }
 });
 
+app.get('/api/estoque', (req, res) => {
+  try {
+    res.json(db.getEstoque());
+  } catch (err) {
+    res.status(500).json({ erro: err.message });
+  }
+});
+
 app.post('/api/movimentacoes/entrada', (req, res) => {
   try {
-    const { produto_id, quantidade, preco_unitario, cor, modelo, capacidade, fornecedor, nota_fiscal, preco_sugerido_venda, percentual_lucro } = req.body;
+    const { produto_id, quantidade, preco_unitario, cor, modelo, capacidade, fornecedor, nota_fiscal, preco_sugerido_venda, percentual_lucro, quantidade_minima } = req.body;
     if (!produto_id || !quantidade) return res.status(400).json({ erro: 'produto_id e quantidade são obrigatórios' });
 
     const produto = db.getProdutoById(produto_id);
@@ -89,6 +97,7 @@ app.post('/api/movimentacoes/entrada', (req, res) => {
     const updates = { quantidade: produto.quantidade + quantidade };
     if (preco_unitario) updates.preco_custo = preco_unitario;
     if (preco_sugerido_venda) updates.preco_venda = preco_sugerido_venda;
+    if (quantidade_minima != null && quantidade_minima !== '') updates.quantidade_minima = Number(quantidade_minima);
     db.updateProduto(produto_id, updates);
 
     const mov = db.insertMovimentacao({
