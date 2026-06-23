@@ -95,7 +95,13 @@ app.post('/api/movimentacoes/entrada', (req, res) => {
       : null;
 
     const updates = { quantidade: produto.quantidade + quantidade };
-    if (preco_unitario) updates.preco_custo = preco_unitario;
+    if (preco_unitario) {
+      const qtdAtual = produto.quantidade;
+      const custoAtual = produto.preco_custo || preco_unitario;
+      updates.preco_custo = qtdAtual > 0
+        ? (qtdAtual * custoAtual + quantidade * preco_unitario) / (qtdAtual + quantidade)
+        : preco_unitario;
+    }
     if (preco_sugerido_venda) updates.preco_venda = preco_sugerido_venda;
     if (quantidade_minima != null && quantidade_minima !== '') updates.quantidade_minima = Number(quantidade_minima);
     db.updateProduto(produto_id, updates);
