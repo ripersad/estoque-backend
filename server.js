@@ -8,7 +8,7 @@ const PORT = process.env.PORT || 3001;
 app.use(cors());
 app.use(express.json());
 
-// ── Produtos ──────────────────────────────────────────────
+// ── Produtos ──────────────────────────────────────────────────
 app.get('/api/produtos', (req, res) => {
   try {
     res.json(db.getProdutos(req.query.busca));
@@ -61,7 +61,7 @@ app.delete('/api/produtos/:id', (req, res) => {
   }
 });
 
-// ── Movimentações ─────────────────────────────────────────
+// ── Movimentações ─────────────────────────────────────────────
 app.get('/api/movimentacoes', (req, res) => {
   try {
     const { tipo, produto_id, inicio, fim } = req.query;
@@ -130,6 +130,9 @@ app.post('/api/movimentacoes/saida', (req, res) => {
       ? ((preco_unitario - produto.preco_custo) * quantidade)
       : null;
 
+    // Salva cliente automaticamente se informado
+    if (cliente) db.insertCliente({ nome: cliente });
+
     db.updateProduto(produto_id, { quantidade: produto.quantidade - quantidade });
 
     const mov = db.insertMovimentacao({
@@ -155,7 +158,49 @@ app.post('/api/movimentacoes/saida', (req, res) => {
   }
 });
 
-// ── Dashboard ─────────────────────────────────────────────
+// ── Clientes ──────────────────────────────────────────────────
+app.get('/api/clientes', (req, res) => {
+  try {
+    res.json(db.getClientes(req.query.busca));
+  } catch (err) {
+    res.status(500).json({ erro: err.message });
+  }
+});
+
+app.post('/api/clientes', (req, res) => {
+  try {
+    const { nome, telefone } = req.body;
+    if (!nome) return res.status(400).json({ erro: 'Nome é obrigatório' });
+    res.status(201).json(db.insertCliente({ nome, telefone }));
+  } catch (err) {
+    res.status(500).json({ erro: err.message });
+  }
+});
+
+app.put('/api/clientes/:id', (req, res) => {
+  try {
+    const existente = db.getClienteById(req.params.id);
+    if (!existente) return res.status(404).json({ erro: 'Cliente não encontrado' });
+    res.json(db.updateCliente(req.params.id, {
+      nome: req.body.nome ?? existente.nome,
+      telefone: req.body.telefone ?? existente.telefone,
+    }));
+  } catch (err) {
+    res.status(500).json({ erro: err.message });
+  }
+});
+
+app.delete('/api/clientes/:id', (req, res) => {
+  try {
+    if (!db.getClienteById(req.params.id)) return res.status(404).json({ erro: 'Cliente não encontrado' });
+    db.deleteCliente(req.params.id);
+    res.json({ mensagem: 'Cliente excluído' });
+  } catch (err) {
+    res.status(500).json({ erro: err.message });
+  }
+});
+
+// ── Dashboard ─────────────────────────────────────────────────
 app.get('/api/dashboard', (req, res) => {
   try {
     res.json(db.getDashboard());
@@ -164,7 +209,7 @@ app.get('/api/dashboard', (req, res) => {
   }
 });
 
-// ── Inicialização ─────────────────────────────────────────
+// ── Inicialização ─────────────────────────────────────────────
 let db;
 initDb()
   .then(database => {

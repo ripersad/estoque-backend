@@ -4,6 +4,7 @@ const path = require('path');
 const DATA_DIR = path.join(__dirname, 'data');
 const PRODUTOS_FILE = path.join(DATA_DIR, 'produtos.json');
 const MOV_FILE = path.join(DATA_DIR, 'movimentacoes.json');
+const CLIENTES_FILE = path.join(DATA_DIR, 'clientes.json');
 
 function loadFile(file, defaultData) {
   try {
@@ -22,8 +23,10 @@ function initDb() {
 
   const prodData = loadFile(PRODUTOS_FILE, { nextId: 1, items: [] });
   const movData = loadFile(MOV_FILE, { nextId: 1, items: [] });
+  const cliData = loadFile(CLIENTES_FILE, { nextId: 1, items: [] });
 
   const db = {
+    // ── Produtos ──────────────────────────────────────────────
     getProdutos(busca) {
       let items = [...prodData.items];
       if (busca) {
@@ -74,6 +77,7 @@ function initDb() {
       saveFile(MOV_FILE, movData);
     },
 
+    // ── Movimentações ─────────────────────────────────────────
     getMovimentacoes({ tipo, produto_id, inicio, fim } = {}) {
       let items = movData.items.filter(m => {
         if (tipo && m.tipo !== tipo) return false;
@@ -97,6 +101,52 @@ function initDb() {
       return mov;
     },
 
+    // ── Clientes ──────────────────────────────────────────────
+    getClientes(busca) {
+      let items = [...cliData.items];
+      if (busca) {
+        const b = busca.toLowerCase();
+        items = items.filter(c => (c.nome || '').toLowerCase().includes(b));
+      }
+      return items.sort((a, b) => a.nome.localeCompare(b.nome));
+    },
+
+    getClienteById(id) {
+      return cliData.items.find(c => c.id === Number(id)) || null;
+    },
+
+    getClienteByNome(nome) {
+      return cliData.items.find(c => c.nome.toLowerCase() === nome.toLowerCase()) || null;
+    },
+
+    insertCliente({ nome, telefone }) {
+      const existing = db.getClienteByNome(nome);
+      if (existing) return existing;
+      const cliente = {
+        id: cliData.nextId++,
+        nome,
+        telefone: telefone || null,
+        criado_em: new Date().toISOString(),
+      };
+      cliData.items.push(cliente);
+      saveFile(CLIENTES_FILE, cliData);
+      return cliente;
+    },
+
+    updateCliente(id, updates) {
+      const idx = cliData.items.findIndex(c => c.id === Number(id));
+      if (idx === -1) return null;
+      Object.assign(cliData.items[idx], updates);
+      saveFile(CLIENTES_FILE, cliData);
+      return cliData.items[idx];
+    },
+
+    deleteCliente(id) {
+      cliData.items = cliData.items.filter(c => c.id !== Number(id));
+      saveFile(CLIENTES_FILE, cliData);
+    },
+
+    // ── Dashboard ─────────────────────────────────────────────
     getDashboard() {
       const today = new Date().toISOString().slice(0, 10);
       const totalProdutos = prodData.items.length;
