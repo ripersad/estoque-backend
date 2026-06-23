@@ -1,6 +1,6 @@
 const express = require('express');
 const cors = require('cors');
-const { initDb, sql } = require('./database');
+const { initDb } = require('./database');
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -9,28 +9,17 @@ app.use(cors());
 app.use(express.json());
 
 // ── Produtos ──────────────────────────────────────────────
-app.get('/api/produtos', async (req, res) => {
+app.get('/api/produtos', (req, res) => {
   try {
-    const { busca } = req.query;
-    const filtros = [sql`1=1`];
-
-    if (busca) {
-      const like = `%${busca}%`;
-      filtros.push(sql`(nome LIKE ${like} OR descricao LIKE ${like})`);
-    }
-
-    const rows = await db.query(sql`
-      SELECT * FROM produtos WHERE ${sql.join(filtros, sql` AND `)} ORDER BY nome
-    `);
-    res.json(rows);
+    res.json(db.getProdutos(req.query.busca));
   } catch (err) {
     res.status(500).json({ erro: err.message });
   }
 });
 
-app.get('/api/produtos/:id', async (req, res) => {
+app.get('/api/produtos/:id', (req, res) => {
   try {
-    const [produto] = await db.query(sql`SELECT * FROM produtos WHERE id = ${req.params.id}`);
+    const produto = db.getProdutoById(req.params.id);
     if (!produto) return res.status(404).json({ erro: 'Produto não encontrado' });
     res.json(produto);
   } catch (err) {
@@ -38,48 +27,34 @@ app.get('/api/produtos/:id', async (req, res) => {
   }
 });
 
-app.post('/api/produtos', async (req, res) => {
+app.post('/api/produtos', (req, res) => {
   try {
     const { nome, descricao, modelo, preco_custo, preco_venda, quantidade, quantidade_minima, unidade } = req.body;
     if (!nome) return res.status(400).json({ erro: 'Nome é obrigatório' });
-
-    const [{ id }] = await db.query(sql`
-      INSERT INTO produtos (nome, descricao, modelo, preco_custo, preco_venda, quantidade, quantidade_minima, unidade)
-      VALUES (${nome}, ${descricao}, ${modelo}, ${preco_custo || 0}, ${preco_venda || 0}, ${quantidade || 0}, ${quantidade_minima || 5}, ${unidade || 'un'})
-      RETURNING id
-    `);
-
-    const [produto] = await db.query(sql`SELECT * FROM produtos WHERE id = ${id}`);
-    res.status(201).json(produto);
+    res.status(201).json(db.insertProduto({ nome, descricao, modelo, preco_custo, preco_venda, quantidade, quantidade_minima, unidade }));
   } catch (err) {
     res.status(500).json({ erro: err.message });
   }
 });
 
-app.put('/api/produtos/:id', async (req, res) => {
+app.put('/api/produtos/:id', (req, res) => {
   try {
-    const [existente] = await db.query(sql`SELECT * FROM produtos WHERE id = ${req.params.id}`);
+    const existente = db.getProdutoById(req.params.id);
     if (!existente) return res.status(404).json({ erro: 'Produto não encontrado' });
-
-    const nome = req.body.nome ?? existente.nome;
-    const modelo = req.body.modelo ?? existente.modelo;
-
-    await db.query(sql`UPDATE produtos SET nome=${nome}, modelo=${modelo} WHERE id=${req.params.id}`);
-
-    const [produto] = await db.query(sql`SELECT * FROM produtos WHERE id = ${req.params.id}`);
+    const produto = db.updateProduto(req.params.id, {
+      nome: req.body.nome ?? existente.nome,
+      modelo: req.body.modelo ?? existente.modelo,
+    });
     res.json(produto);
   } catch (err) {
     res.status(500).json({ erro: err.message });
   }
 });
 
-app.delete('/api/produtos/:id', async (req, res) => {
+app.delete('/api/produtos/:id', (req, res) => {
   try {
-    const [existente] = await db.query(sql`SELECT id FROM produtos WHERE id = ${req.params.id}`);
-    if (!existente) return res.status(404).json({ erro: 'Produto não encontrado' });
-
-    await db.query(sql`DELETE FROM movimentacoes WHERE produto_id = ${req.params.id}`);
-    await db.query(sql`DELETE FROM produtos WHERE id = ${req.params.id}`);
+    if (!db.getProdutoById(req.params.id)) return res.status(404).json({ erro: 'Produto não encontrado' });
+    db.deleteProduto(req.params.id);
     res.json({ mensagem: 'Produto excluído' });
   } catch (err) {
     res.status(500).json({ erro: err.message });
@@ -87,35 +62,21 @@ app.delete('/api/produtos/:id', async (req, res) => {
 });
 
 // ── Movimentações ─────────────────────────────────────────
-app.get('/api/movimentacoes', async (req, res) => {
+app.get('/api/movimentacoes', (req, res) => {
   try {
     const { tipo, produto_id, inicio, fim } = req.query;
-    const filtros = [sql`1=1`];
-
-    if (tipo) filtros.push(sql`m.tipo = ${tipo}`);
-    if (produto_id) filtros.push(sql`m.produto_id = ${produto_id}`);
-    if (inicio) filtros.push(sql`DATE(m.criado_em) >= ${inicio}`);
-    if (fim) filtros.push(sql`DATE(m.criado_em) <= ${fim}`);
-
-    const rows = await db.query(sql`
-      SELECT m.*, p.nome AS produto_nome, p.unidade
-      FROM movimentacoes m
-      JOIN produtos p ON p.id = m.produto_id
-      WHERE ${sql.join(filtros, sql` AND `)}
-      ORDER BY m.criado_em DESC
-    `);
-    res.json(rows);
+    res.json(db.getMovimentacoes({ tipo, produto_id, inicio, fim }));
   } catch (err) {
     res.status(500).json({ erro: err.message });
   }
 });
 
-app.post('/api/movimentacoes/entrada', async (req, res) => {
+app.post('/api/movimentacoes/entrada', (req, res) => {
   try {
     const { produto_id, quantidade, preco_unitario, cor, modelo, capacidade, fornecedor, nota_fiscal, preco_sugerido_venda, percentual_lucro } = req.body;
     if (!produto_id || !quantidade) return res.status(400).json({ erro: 'produto_id e quantidade são obrigatórios' });
 
-    const [produto] = await db.query(sql`SELECT * FROM produtos WHERE id = ${produto_id}`);
+    const produto = db.getProdutoById(produto_id);
     if (!produto) return res.status(404).json({ erro: 'Produto não encontrado' });
 
     const pctLucro = preco_sugerido_venda && preco_unitario
@@ -125,28 +86,40 @@ app.post('/api/movimentacoes/entrada', async (req, res) => {
       ? ((preco_sugerido_venda - preco_unitario) * quantidade)
       : null;
 
-    await db.query(sql`UPDATE produtos SET quantidade = quantidade + ${quantidade} WHERE id = ${produto_id}`);
-    if (preco_unitario) await db.query(sql`UPDATE produtos SET preco_custo = ${preco_unitario} WHERE id = ${produto_id}`);
-    if (preco_sugerido_venda) await db.query(sql`UPDATE produtos SET preco_venda = ${preco_sugerido_venda} WHERE id = ${produto_id}`);
+    const updates = { quantidade: produto.quantidade + quantidade };
+    if (preco_unitario) updates.preco_custo = preco_unitario;
+    if (preco_sugerido_venda) updates.preco_venda = preco_sugerido_venda;
+    db.updateProduto(produto_id, updates);
 
-    const [{ id }] = await db.query(sql`
-      INSERT INTO movimentacoes (produto_id, tipo, quantidade, preco_unitario, cor, modelo, capacidade, fornecedor, nota_fiscal, preco_sugerido_venda, percentual_lucro, valor_lucro)
-      VALUES (${produto_id}, 'entrada', ${quantidade}, ${preco_unitario}, ${cor}, ${modelo}, ${capacidade}, ${fornecedor}, ${nota_fiscal}, ${preco_sugerido_venda}, ${pctLucro}, ${valLucro})
-      RETURNING id
-    `);
+    const mov = db.insertMovimentacao({
+      produto_id: Number(produto_id),
+      tipo: 'entrada',
+      quantidade,
+      preco_unitario: preco_unitario || null,
+      cor: cor || null,
+      modelo: modelo || null,
+      capacidade: capacidade || null,
+      fornecedor: fornecedor || null,
+      nota_fiscal: nota_fiscal || null,
+      preco_sugerido_venda: preco_sugerido_venda || null,
+      percentual_lucro: pctLucro,
+      valor_lucro: valLucro,
+      cliente: null,
+      observacao: null,
+    });
 
-    res.status(201).json({ id, produto_nome: produto.nome, quantidade });
+    res.status(201).json({ id: mov.id, produto_nome: produto.nome, quantidade });
   } catch (err) {
     res.status(500).json({ erro: err.message });
   }
 });
 
-app.post('/api/movimentacoes/saida', async (req, res) => {
+app.post('/api/movimentacoes/saida', (req, res) => {
   try {
     const { produto_id, quantidade, preco_unitario, cor, modelo, capacidade, cliente } = req.body;
     if (!produto_id || !quantidade) return res.status(400).json({ erro: 'produto_id e quantidade são obrigatórios' });
 
-    const [produto] = await db.query(sql`SELECT * FROM produtos WHERE id = ${produto_id}`);
+    const produto = db.getProdutoById(produto_id);
     if (!produto) return res.status(404).json({ erro: 'Produto não encontrado' });
     if (produto.quantidade < quantidade) return res.status(400).json({ erro: 'Estoque insuficiente' });
 
@@ -157,43 +130,35 @@ app.post('/api/movimentacoes/saida', async (req, res) => {
       ? ((preco_unitario - produto.preco_custo) * quantidade)
       : null;
 
-    await db.query(sql`UPDATE produtos SET quantidade = quantidade - ${quantidade} WHERE id = ${produto_id}`);
-    const [{ id }] = await db.query(sql`
-      INSERT INTO movimentacoes (produto_id, tipo, quantidade, preco_unitario, cor, modelo, capacidade, cliente, percentual_lucro, valor_lucro)
-      VALUES (${produto_id}, 'saida', ${quantidade}, ${preco_unitario}, ${cor}, ${modelo}, ${capacidade}, ${cliente}, ${pctLucro}, ${valLucro})
-      RETURNING id
-    `);
+    db.updateProduto(produto_id, { quantidade: produto.quantidade - quantidade });
 
-    res.status(201).json({ id, produto_nome: produto.nome, quantidade });
+    const mov = db.insertMovimentacao({
+      produto_id: Number(produto_id),
+      tipo: 'saida',
+      quantidade,
+      preco_unitario: preco_unitario || null,
+      cor: cor || null,
+      modelo: modelo || null,
+      capacidade: capacidade || null,
+      fornecedor: null,
+      nota_fiscal: null,
+      preco_sugerido_venda: null,
+      percentual_lucro: pctLucro,
+      valor_lucro: valLucro,
+      cliente: cliente || null,
+      observacao: null,
+    });
+
+    res.status(201).json({ id: mov.id, produto_nome: produto.nome, quantidade });
   } catch (err) {
     res.status(500).json({ erro: err.message });
   }
 });
 
 // ── Dashboard ─────────────────────────────────────────────
-app.get('/api/dashboard', async (req, res) => {
+app.get('/api/dashboard', (req, res) => {
   try {
-    const [
-      [{ total: totalProdutos }],
-      [{ total: totalItens }],
-      [{ total: valorEstoque }],
-      [{ total: estoqueBaixo }],
-      [{ total: entradasHoje }],
-      [{ total: saidasHoje }],
-      produtosBaixos,
-      ultimasMovimentacoes,
-    ] = await Promise.all([
-      db.query(sql`SELECT COUNT(*) AS total FROM produtos`),
-      db.query(sql`SELECT COALESCE(SUM(quantidade), 0) AS total FROM produtos`),
-      db.query(sql`SELECT COALESCE(SUM(quantidade * preco_custo), 0) AS total FROM produtos`),
-      db.query(sql`SELECT COUNT(*) AS total FROM produtos WHERE quantidade <= quantidade_minima`),
-      db.query(sql`SELECT COALESCE(SUM(quantidade), 0) AS total FROM movimentacoes WHERE tipo = 'entrada' AND DATE(criado_em) = DATE('now')`),
-      db.query(sql`SELECT COALESCE(SUM(quantidade), 0) AS total FROM movimentacoes WHERE tipo = 'saida' AND DATE(criado_em) = DATE('now')`),
-      db.query(sql`SELECT id, nome, quantidade, quantidade_minima FROM produtos WHERE quantidade <= quantidade_minima ORDER BY quantidade ASC LIMIT 5`),
-      db.query(sql`SELECT m.*, p.nome AS produto_nome FROM movimentacoes m JOIN produtos p ON p.id = m.produto_id ORDER BY m.criado_em DESC LIMIT 10`),
-    ]);
-
-    res.json({ totalProdutos, totalItens, valorEstoque, estoqueBaixo, entradasHoje, saidasHoje, produtosBaixos, ultimasMovimentacoes });
+    res.json(db.getDashboard());
   } catch (err) {
     res.status(500).json({ erro: err.message });
   }
